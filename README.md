@@ -40,3 +40,11 @@ To execute the script use:
     python main.py -a rds -f reportname.csv
 ```
 
+## Changelog
+
+- 0.0.2:
+    - Optimized code to retrieve information with a single method
+    - Fixed bugs where some objects were missing when calling AWS API
+
+- 0.0.1:
+    - First release
