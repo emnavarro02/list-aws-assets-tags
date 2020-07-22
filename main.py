@@ -2,6 +2,7 @@ import boto3
 import csv
 import os
 import argparse
+from deprecated import deprecated
 
 # Name, uptime, owner
 restag = boto3.client('resourcegroupstaggingapi')
@@ -46,9 +47,11 @@ def write_to_csv(filename, header, results, write_header=False, append_data=True
         print(e)
 
 
-def ec2_tags_report(report):
+@deprecated(version="0.0.2", reason="Consider using the asset_tags_report function.")
+def ec2_tags_report():
     response = restag.get_resources(ResourcesPerPage=50)
     resources_list = []
+
     while 'PaginationToken' in response and response['PaginationToken']:
         token = response['PaginationToken']
         response = restag.get_resources(ResourcesPerPage=50, PaginationToken=token)
@@ -66,33 +69,23 @@ def ec2_tags_report(report):
                     }
                 )
     return resources_list
-    # write_to_csv("ec2_tags_report.csv", header, resources_list, True, False)
 
 
-def rds_tags_report(response):
-    response = restag.get_resources(ResourcesPerPage=50)
+@deprecated(version="0.0.2", reason="Consider using the asset_tags_report function.")
+def rds_tags_report():
+    response = restag.get_resources(ResourcesPerPage=50, ResourceTypeFilters=["rds:db"])
     resources_list = []
-    while 'PaginationToken' in response and response['PaginationToken']:
-        token = response['PaginationToken']
-        response = restag.get_resources(ResourcesPerPage=50, PaginationToken=token)
-        for resource in response["ResourceTagMappingList"]:
-            # print(resource["ResourceARN"])
-            if "rds" == resource["ResourceARN"].split(":")[2] and "db" == resource["ResourceARN"].split(":")[5]:
-                resources_list.append(
-                    {
-                        "account": resource["ResourceARN"].split(":")[4],
-                        "region": resource["ResourceARN"].split(":")[3],
-                        "instanceid": resource["ResourceARN"].split(":")[6],
-                        "name": get_tag_value(resource["Tags"], "Name"),
-                        "uptime": get_tag_value(resource["Tags"], "uptime"),
-                        "owner": get_tag_value(resource["Tags"], "owner")
-                    }
-                )
+    if len(response["ResourceTagMappingList"]) > 0:
+        resources_list += resource_tag_map_values(response)
+        while 'PaginationToken' in response and response['PaginationToken']:
+            token = response['PaginationToken']
+            response = restag.get_resources(ResourcesPerPage=50, ResourceTypeFilters=["rds:db"], PaginationToken=token)
+            resources_list += resource_tag_map_values(response)
     return resources_list
-    # write_to_csv("rds_tags_report.csv", header, resources_list, True, False)
 
 
-def lambda_tags_report(response):
+@deprecated(version="0.0.2", reason="Consider using the asset_tags_report function.")
+def lambda_tags_report():
     response = restag.get_resources(ResourcesPerPage=50)
     resources_list = []
     while 'PaginationToken' in response and response['PaginationToken']:
@@ -112,27 +105,92 @@ def lambda_tags_report(response):
                     }
                 )
     return resources_list
-    # write_to_csv("lambda_tags_report.csv", header, resources_list, True, False)
+
+
+def resource_tag_map_values(response):
+    """
+    Get the required values of each object in a list of resources provided by the AWS API.
+
+    Params:
+        - response (dict) : The response obtained from the API call that contains AWS resources.
+    Returns:
+        list
+    """
+    resources_list = []
+    for resource in response["ResourceTagMappingList"]:
+        resources_list.append(
+            {
+                "account": resource["ResourceARN"].split(":")[4],
+                "region": resource["ResourceARN"].split(":")[3],
+                "instanceid": get_instance_id(resource["ResourceARN"]),
+                "name": get_tag_value(resource["Tags"], "Name"),
+                "uptime": get_tag_value(resource["Tags"], "uptime"),
+                "owner": get_tag_value(resource["Tags"], "owner")
+            }
+        )
+    return resources_list
+
+
+def get_instance_id(resource_arn):
+    """
+    Given an object ARN, retrieves the instance_id of the object.
+    For example, if the ARN of a lambda function is "arn:aws:lambda:eu-central-1:733412096037:function:iotsync-dev-lambdaFunctionName", the value returned is "iotsync-dev-lambdaFunctionName".
+    If the ARN of a EC2 instance is "arn:aws:ec2:eu-central-1:733412096037:instance/i-0db20aa016c4c7956", the value returned is "i-0db20aa016c4c7956".
+
+    Params:
+        - resource_arn (String) : The ARN of the resource retrieved by the AWS API
+    Returns:
+        String
+    """
+    if "aws:ec2" in resource_arn:
+        return resource_arn.split(":")[5].split("/")[1]
+    return resource_arn.split(":")[6]
+
+
+def asset_tags_report(resource_type):
+    """
+    Get the value of tags for all objects of a specific type.
+
+    Params:
+        - resource_type (String) : The object type that is accepted by the API. 
+    Returns:
+        list
+    """
+    response = restag.get_resources(ResourcesPerPage=50, ResourceTypeFilters=[resource_type])
+    resources_list = []
+    if len(response["ResourceTagMappingList"]) > 0:
+        resources_list += resource_tag_map_values(response)
+        while 'PaginationToken' in response and response['PaginationToken']:
+            token = response['PaginationToken']
+            response = restag.get_resources(ResourcesPerPage=50, ResourceTypeFilters=[resource_type], PaginationToken=token)
+            resources_list += resource_tag_map_values(response)
+    return resources_list
 
 
 def main(asset, filename):
-    print("Asset: " + asset)
-    response = restag.get_resources(ResourcesPerPage=50)
+    print("Getting tags for " + asset)
 
-    if asset == "ec2":
-        resources_list = ec2_tags_report(response)
-    elif asset == "rds":
-        resources_list = rds_tags_report(response)
-    elif asset == "lambda":
-        resources_list = lambda_tags_report(response)
-    else:
-        print("Service was not found...")
-
+    # If user did not specify the report name then use a default value.
     if not filename:
         print("Filename not defined, using default.")
         filename += asset + "_tags_report.csv"
         print("The new filename is: " + filename)
-    write_to_csv(filename, header, resources_list, True, False)
+
+    # Verify the type of object. If the user did not specify a value, the default value is ec2.
+    if asset == "ec2":
+        resource_type = "ec2:instance"
+    elif asset == "rds":
+        resource_type = ("rds:db")
+    elif asset == "lambda":
+        resource_type = "lambda:function"
+    else:
+        print("Service was not found...")
+
+    # Verify whether the resource_type has been filled properly. If so, get the tag information.
+    if resource_type:
+        resources_list = asset_tags_report(resource_type)
+        # Print the information to a CSV file
+        write_to_csv(filename, header, resources_list, True, False)
 
 
 parser = argparse.ArgumentParser(description="Generates a CSV report of tags for AWS assets.")
