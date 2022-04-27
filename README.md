@@ -31,7 +31,7 @@ The user that will execute the script must have at least the following permissio
 
 The following arguments can be specified when running the script: 
 
-    -a --asset    : (Required) Aseet type, which can be ec2, rds or lambda
+    -a --asset    : (Required) Asset type, which can be ec2, rds or lambda
     -f --filename : (Optional) The filename. If no value is provided, a default name will be used. 
 
 To execute the script use: 
